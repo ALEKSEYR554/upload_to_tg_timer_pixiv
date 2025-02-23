@@ -1,14 +1,15 @@
 require 'telegram/bot'
 require "mini_magick"
 require 'fileutils'
+require 'socksify/http'
 require "json"
 require 'logger'
-
 telegram_api_local = Thread.new{system 'telegram-bot-api --api-id YOUR_ID --api-hash YOUR_HASH --local'}
-
-
 $pixiv_logger = Logger.new('pixiv_logger.log', 3, 10485760)
-
+socks_ip = '' # your socks IP
+socks_port =  # your socks port
+TCPSocket.socks_username = "" # socks username
+TCPSocket.socks_password = "" # socks password
 
 def transform_string(input_string)
     input_string.gsub!("&","&amp")
@@ -98,9 +99,9 @@ comments_info=0
 #telegram_api_local.join
 p 'server started'
 counter=0
-token = PUT TOKEN HERE
-channel_id= CHANNEL ID HERE
-admin_id=YOUR ID HERE
+token = 'YOUR TOKEN'
+channel_id=""
+your_user_id=1234567
 
 Dir.mkdir("uploaded") unless File.directory? ("uploaded")
 Dir.mkdir("compress") unless File.directory? ("compress")
@@ -109,6 +110,11 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
     #bot.listen do |message|
     #    p message
     #end break
+    p bot.api.get_chat(chat_id:channel_id)
+
+
+
+
     p comment_chat_id=bot.api.get_chat(chat_id:channel_id).linked_chat_id
     p comment_chat_id
     exten=''
@@ -138,7 +144,7 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
     p "-------------"
     time_of_compleation=Time.now+result.length*wait_time_in_seconds
     bot.api.send_message(
-        chat_id: admin_id,
+        chat_id: your_user_id,
         text: "Total posts: #{result.length}\nAproximate time of completion:\n#{time_of_compleation.strftime("%k:%M:%S  %d.%m.%Y")}"
     )
     
@@ -152,7 +158,7 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
     $pixiv_logger.info("#{result}")
     $pixiv_logger.info("time of completion:#{time_of_compleation.strftime("%k:%M:%S  %d.%m.%Y")}")
 
-
+    was_sleeping=false
     captions_array=[]
 
     
@@ -161,6 +167,37 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
         #if file.end_with? ".jpg"
             #exten='image/jpeg'
         #else 
+
+        while true
+            p "???????=#{(Time.now.hour<8 || Time.now.hour>=23) && upload_status==0}"
+            if !((Time.now.hour<8 || Time.now.hour>=23) && upload_status==0)
+                if was_sleeping
+                    a=Dir.glob("*.{jpg,png,jpeg}")
+                    result = []
+                    current_group = []
+                    a.each_with_index do |item, index|
+                        if index > 0 && item.split("_")[0] == a[index-1].split("_")[0]
+                            current_group << item
+                        else
+                            result << current_group unless current_group.empty?
+                            current_group = [item]
+                        end
+                    end
+                    result=result.shuffle
+                    result=result.shuffle
+                    time_of_compleation=Time.now+result.length*wait_time_in_seconds
+                    bot.api.send_message(
+                        chat_id: your_user_id,
+                        text: "Total posts: #{result.length}\nAproximate time of completion:\n#{time_of_compleation.strftime("%k:%M:%S  %d.%m.%Y")}"
+                    )
+                    was_sleeping=false
+                end
+                break
+            end
+            p("sleeping")
+            was_sleeping=true
+            sleep(10*60)
+        end
         $pixiv_logger.info("File=#{file}")
         counter+=1
         exten="image/png"
@@ -174,34 +211,36 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
         author_name=""
 
         if file[0].match?(/[0-9]_p[0-9]*\.(jpg|png|jpeg)/)
-            temp_lnk="https://www.pixiv.net/artworks/#{file[0][..file[0].index("_p")-1]}"
+            resp=""
+            temp_lnk="https://www.pixiv.net/ajax/illust/#{file[0][..file[0].index("_p")-1]}"
             
+
+            #OLD but usable if without socks
+            begin
             resp=Faraday.new(temp_lnk, headers: { 'User-Agent' => 'twitter_images_telegrambot/1.0' }).get.body
-            if resp.include? 'favicon.ico"><title>'
-                resp= resp[resp.index('favicon.ico"><title>')+10..resp.index(temp_lnk)-1]
-                resp= resp[..resp.index(" - pixiv")-1]
-                temp_indexes=resp.enum_for(:scan, /(?= - )/).map do
-                    Regexp.last_match.offset(0).first
+            rescue
+                #socks5
+                uri=URI.parse(temp_lnk)
+                Net::HTTP.SOCKSProxy(socks_ip, socks_port).start(uri.host, uri.port, use_ssl: true) do |http|
+                    resp= http.get(uri.path).body.force_encoding('UTF-8')
                 end
-                if resp.include?"のイラスト"
-                    author_name=resp[temp_indexes[-1]+3..resp.index("のイラスト")-1]#のマンガ
-                else
-                    author_name= resp[temp_indexes[-1]+3..resp.index("のマンガ")-1]
-                end
-                #captions_array
-                #author_name= resp[resp.rindex(' - ')+3..]
-                author_name="##{transform_string(author_name)}\n"
-            else
-                author_name="#deleted_artwork\n"
             end
+            resp=JSON.parse(resp)
+            if resp["error"]
+                author_name= "deleted_artwork"
+            else
+                author_name= transform_string(resp["body"]["userName"])
+            end
+           
+
             #if file[0][..file[0].index("_p")-1].to_i>=20
-            caption_with_author_name="#{author_name}<a href=\"https://www.pixiv.net/en/artworks/#{file[0][..file[0].index("_p")-1]}\">Source pixiv</a>"
+            caption_with_author_name="##{author_name}\n<a href=\"https://www.pixiv.net/en/artworks/#{file[0][..file[0].index("_p")-1]}\">Source pixiv</a>"
             p caption_with_author_name
             captions_array<<["link","https://www.pixiv.net/en/artworks/#{file[0][..file[0].index("_p")-1]}"]
             $pixiv_logger.info("captions_array_getting_hashtag=#{captions_array}")
             #else
-            #    caption_with_author_name="a"
-            #    captions_array<<["text","a"]
+            #    caption_with_author_name="<a href=\"https://t.me/trash_sharing\">Свалка placeholder</a>"
+            #    captions_array<<["link","https://t.me/trash_sharing"]
             #end
             #end
         end
@@ -531,23 +570,8 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
     end
 
     bot.api.send_message(
-          chat_id: admin_id,
+          chat_id: your_user_id,
           text: "finnished, uploaded #{counter} posts"
         )
     telegram_api_local.exit
 end
-
-=begin
-uploaded_files=[]
-db.execute( "select * from uploaded" ) do |row|
-    uploaded_files+=row
-end
-
-Dir.glob("*.{jpg,png,jpeg}").each do |file|
-    FileUtils.mv(file, "uploaded/#{file}") if uploaded_files.include? file
-end
-p "finnish, clearing DB"
-db.execute("DELETE FROM uploaded")
-p "DB deleted"
-p "fins"
-=end
