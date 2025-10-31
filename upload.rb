@@ -200,7 +200,7 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
             p "???????=#{(get_time().hour<ENV['HOUR_AWAKE'].to_i || get_time().hour>=ENV['HOUR_SLEEP'].to_i) && upload_status==0}"
             if !((get_time().hour<ENV['HOUR_AWAKE'].to_i || get_time().hour>=ENV['HOUR_SLEEP'].to_i) && upload_status==0)
                 if was_sleeping
-                    a=Dir.glob("*.{jpg,png,jpeg}")
+                    a=Dir.glob("#{ENV['FOLDER_WITH_IMAGES']}*.{jpg,png,jpeg}")
                     result = []
                     current_group = []
                     a.each_with_index do |item_new, index|
@@ -656,3 +656,4 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
         )
     telegram_api_local.exit
 end
+
