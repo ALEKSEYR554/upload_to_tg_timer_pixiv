@@ -4,7 +4,9 @@ require 'fileutils'
 require "json"
 require 'logger'
 require 'dotenv/load'
-telegram_api_local = Thread.new{`telegram-bot-api --api-id #{ENV['TELEGRAM_APP_ID']} --api-hash #{ENV['TELEGRAM_APP_HASH']} --local`}
+require 'timeout'
+
+#telegram_api_local = Thread.new{`telegram-bot-api --api-id #{ENV['TELEGRAM_APP_ID']} --api-hash #{ENV['TELEGRAM_APP_HASH']} --local`}
 $pixiv_logger = Logger.new('pixiv_logger.log', 3, 10485760)
 
 def transform_string(input_string)
@@ -15,6 +17,17 @@ def transform_string(input_string)
     input_string.strip
 end
 def getting_comments_message_id(captions_array,message_to_reply_in_comments,comment_chat_id,bot)
+
+    # === НАСТРОЙКИ ТАЙМАУТА ===
+    timeout_seconds = 60 # Время ожидания в секундах
+    
+    # Значение, которое вернется, если время выйдет:
+    fallback_value = {
+        message_to_reply_in_comments: 0, # <-- МЕНЯТЬ ТУТ (твое предзаписанное значение)
+        comment_chat_id: ENV['CHANNEL_ID']
+    }
+    # ==========================
+
     if message_to_reply_in_comments!=0
         p "idk"
         $pixiv_logger.info({message_to_reply_in_comments: message_to_reply_in_comments,comment_chat_id: comment_chat_id})
@@ -44,46 +57,53 @@ def getting_comments_message_id(captions_array,message_to_reply_in_comments,comm
 
             $pixiv_logger.info("captions_array=#{captions_array}")
             #$pixiv_logger.info(captions_array)
+            begin
+                Timeout.timeout(timeout_seconds) do
+                    bot.listen do |message| 
+                        #p image_post["result"][0]["message_id"]
+                        #p message
+                        #channel post ID
+                        #next if 
+                        #next if message.poll
+                        next if message.class!=Telegram::Bot::Types::Message
 
-            bot.listen do |message| 
-                #p image_post["result"][0]["message_id"]
-                #p message
-                #channel post ID
-                #next if 
-                #next if message.poll
-                next if message.class!=Telegram::Bot::Types::Message
-
-                #image_post_id=image_post_id["result"]#[0]#["message_id"]#.message_id
-                #p "message.forward_from_message_id=#{message.forward_from_message_id} ____ image_post_id=#{image_post_id}"
-                if captions_array[0]=="link"
-                    next if message.caption_entities==nil
-                    for entitie in message.caption_entities
-                        $pixiv_logger.info(entitie)
-                        #p entitie
-                        #p entitie.url
-                        #p captions_array[1]
-                        #p entitie.url==captions_array[1]
-                        if entitie.url==captions_array[1]
-                            #p "YRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-                            #temp[:reply_parameters]={message_id:message.message_id}#,chat_id:comment_chat_id}
-                            message_to_reply_in_comments=message.message_id
-                            return {message_to_reply_in_comments: message_to_reply_in_comments,comment_chat_id: comment_chat_id}
-                            #temp[:reply_to_message_id]=message_to_reply_in_comments
-                            #temp[:chat_id]=comment_chat_id
-                            break
+                        #image_post_id=image_post_id["result"]#[0]#["message_id"]#.message_id
+                        #p "message.forward_from_message_id=#{message.forward_from_message_id} ____ image_post_id=#{image_post_id}"
+                        if captions_array[0]=="link"
+                            next if message.caption_entities==nil
+                            for entitie in message.caption_entities
+                                $pixiv_logger.info(entitie)
+                                #p entitie
+                                #p entitie.url
+                                #p captions_array[1]
+                                #p entitie.url==captions_array[1]
+                                if entitie.url==captions_array[1]
+                                    #p "YRAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                                    #temp[:reply_parameters]={message_id:message.message_id}#,chat_id:comment_chat_id}
+                                    message_to_reply_in_comments=message.message_id
+                                    return {message_to_reply_in_comments: message_to_reply_in_comments,comment_chat_id: comment_chat_id}
+                                    #temp[:reply_to_message_id]=message_to_reply_in_comments
+                                    #temp[:chat_id]=comment_chat_id
+                                    break
+                                end
+                            end
+                        else
+                            $pixiv_logger.info("message.caption=#{message.caption}  captions_array[1]=#{captions_array[1]}")
+                            if message.caption==captions_array[1]
+                                #temp[:reply_parameters]={message_id:message.message_id}#,chat_id:comment_chat_id}
+                                message_to_reply_in_comments=message.message_id
+                                return {message_to_reply_in_comments: message_to_reply_in_comments,comment_chat_id: comment_chat_id}
+                                #temp[:reply_to_message_id]=message_to_reply_in_comments
+                                #temp[:chat_id]=comment_chat_id
+                                break
+                            end
                         end
                     end
-                else
-                    $pixiv_logger.info("message.caption=#{message.caption}  captions_array[1]=#{captions_array[1]}")
-                    if message.caption==captions_array[1]
-                        #temp[:reply_parameters]={message_id:message.message_id}#,chat_id:comment_chat_id}
-                        message_to_reply_in_comments=message.message_id
-                        return {message_to_reply_in_comments: message_to_reply_in_comments,comment_chat_id: comment_chat_id}
-                        #temp[:reply_to_message_id]=message_to_reply_in_comments
-                        #temp[:chat_id]=comment_chat_id
-                        break
-                    end
                 end
+            rescue Timeout::Error
+                # Сюда код попадает, если прошло 60 секунд (или сколько укажешь)
+                $pixiv_logger.warn("TIMEOUT: Не дождались сообщения за #{timeout_seconds} сек. Возвращаем дефолтное значение.")
+                return fallback_value
             end
         end
     end
@@ -103,10 +123,13 @@ def upload_archives(bot,base_name)
     $pixiv_logger.info("compressed_10_files=#{compressed_10_files}")
     for ten_files in compressed_10_files
         #p ten_files
-        bot.api.sendMediaGroup(
-            media: ten_files,
-            chat_id: ENV['BACKUP_CHANNEL_ID']
-        )
+        begin
+            bot.api.sendMediaGroup(
+                media: ten_files,
+                chat_id: ENV['BACKUP_CHANNEL_ID']
+            )
+        rescue
+        end
     end
 end
 
@@ -603,7 +626,7 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
         #result.delete(file) BAD DONT USE
         result-= [file]
         file.each do |ff|
-            FileUtils.mv(ff, "uploaded/#{file_code}")
+            FileUtils.mv(ff, "uploaded/#{File.basename(ff)}")
             #p "te"
         end
 
@@ -616,7 +639,12 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
         message_to_reply_in_comments=0
     end
     rescue Interrupt => e
+        $pixiv_logger.warn("Interrupt = #{e}")
         p "Interrupted, closing"
+        return
+    rescue SignalException => e
+        $pixiv_logger.warn("SignalException = #{e}")
+        p "SignalException = #{e}"
         return
     rescue Exception=> e
         p e
@@ -656,4 +684,3 @@ Telegram::Bot::Client.run(token, url:'http://127.0.0.1:8081') do |bot|#, url:'ht
         )
     telegram_api_local.exit
 end
-
